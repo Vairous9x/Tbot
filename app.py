@@ -1,6 +1,8 @@
 import os
 import logging
 import yt_dlp
+from threading import Thread
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update
 from telegram.ext import (
     Application, CommandHandler,
@@ -14,6 +16,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 TOKEN = os.getenv("BOT_TOKEN")
+PORT = int(os.getenv("PORT", 8000))
 
 SUPPORTED = [
     "youtube.com", "youtu.be",
@@ -27,6 +30,29 @@ SUPPORTED = [
 ]
 
 
+# =============================================
+#     Health Check Server
+# =============================================
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+    def log_message(self, format, *args):
+        pass  # لا نطبع لوقات Health Check
+
+
+def start_health_server():
+    server = HTTPServer(("0.0.0.0", PORT), HealthHandler)
+    logger.info(f"✅ Health check server on port {PORT}")
+    server.serve_forever()
+
+
+# =============================================
+#     Bot Functions
+# =============================================
 def is_supported(url):
     return any(p in url.lower() for p in SUPPORTED)
 
@@ -124,6 +150,8 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await msg.edit_text("🔒 المحتوى خاص")
         elif "unavailable" in error.lower():
             await msg.edit_text("❌ المحتوى غير متاح")
+        elif "inappropriate" in error.lower():
+            await msg.edit_text("🔞 المحتوى مقيد بسبب العمر")
         else:
             await msg.edit_text(f"❌ خطأ: {error[:200]}")
         logger.error(f"DL error: {error}")
@@ -137,6 +165,10 @@ def main():
     if not TOKEN:
         logger.error("❌ BOT_TOKEN مفقود!")
         return
+
+    # تشغيل Health Check في thread منفصل
+    health_thread = Thread(target=start_health_server, daemon=True)
+    health_thread.start()
 
     logger.info("🚀 البوت يعمل!")
 
